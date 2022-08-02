@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "297162651833",
+    "project_id": "hernes-b896f",
+    "storage_bucket": "hernes-b896f.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:297162651833:android:2e27dd422e87d348880368",
+        "android_client_info": {
+          "package_name": "com.sinquirls.hernes"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "297162651833-sekc2nqfa8h3r7u17cgklechif2he7hp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBaTtEbTlNHiaEOPtmoM6cjq7WeY9Dx4RU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "297162651833-sekc2nqfa8h3r7u17cgklechif2he7hp.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
