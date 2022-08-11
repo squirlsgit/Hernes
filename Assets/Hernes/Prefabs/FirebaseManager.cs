@@ -11,7 +11,14 @@ public class FirebaseManager : MonoBehaviour
 {
     public static string scenePath = "scene/";
     public string modulePath = "";
+    public string positionField = "position";
+    public string rotationField = "rotation";
     public Dictionary<string, object> value = null;
+    public string type = null;
+    public string _path;
+    public bool pushIfEmptyOnInit = true;
+    public bool _isListening = false;
+    public UnityEvent<object> OnValueUpdate = new UnityEvent<object>();
     public virtual Dictionary<string, object> Value
     {
         get
@@ -25,12 +32,21 @@ public class FirebaseManager : MonoBehaviour
             if (value == null)
             {
                 OnEmpty();
+            } else
+            {
+                if (value.TryGetValue(positionField, out var p))
+                {
+                    var pos = (List<float>)p;
+                    transform.position = pos.GetVector();
+                }
+                if (value.TryGetValue(rotationField, out var r))
+                {
+                    var rot = (List<float>)r;
+                    transform.rotation = rot.GetEuler();
+                }
             }
         }
     }
-    public string _path;
-    public bool isListening = false;
-    public UnityEvent<object> OnValueUpdate = new UnityEvent<object>();
     public virtual string Path
     {
         get
@@ -54,17 +70,35 @@ public class FirebaseManager : MonoBehaviour
     private void OnDestroy()
     {
         FirebaseDatabase.DefaultInstance.GetReference(Path).ValueChanged -= HandleUpdate;
-        isListening = false;
+        _isListening = false;
     }
     void OnFirstFrame()
     {
         _path = Path;
+        Reference.GetValueAsync().ContinueWithOnMainThread(task =>
+        {
+            if (task.IsFaulted)
+            {
+                // Handle the error...
+                Debug.LogError(task.Exception.Message);
+            }
+            else if (task.IsCompleted)
+            {
+                DataSnapshot snapshot = task.Result;
+                if (snapshot.Value == null)
+                {
+                    if (pushIfEmptyOnInit)
+                    {
+                        SetRemoteValue();
+                    }
+                } else
+                {
+                    UpdateLocalValue(snapshot);
+                }
+            }
+        });
         Reference.ValueChanged += HandleUpdate;
-        isListening = true;
-    }
-    void Get()
-    {
-
+        _isListening = true;
     }
     private void HandleUpdate(object sender, ValueChangedEventArgs args)
     {
@@ -83,12 +117,19 @@ public class FirebaseManager : MonoBehaviour
     {
         Debug.LogWarning($"FirebaseManager {gameObject.name} {Path} is Empty");
     }
-    protected virtual void PushLocalValue(Dictionary<string, object> data)
+    public virtual void SetRemoteValue(Dictionary<string, object> data = null)
     {
-        Reference.Push();
-    }
-    public virtual void SetRemoteValue(Dictionary<string, object> data)
-    {
+        if (data == null)
+        {
+            data = new Dictionary<string, object>();
+        }
+        data[positionField] = transform.GetPosition();
+        data[rotationField] = transform.GetRotation();
+        data["type"] = type;
+        if (type == null)
+        {
+            Debug.LogWarning($"{Path} has no type.");
+        }
         Reference.SetValueAsync(data);
     }
     public virtual void Remove()
