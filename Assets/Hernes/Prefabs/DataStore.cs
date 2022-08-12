@@ -7,16 +7,31 @@ using Firebase.Extensions;
 using UnityEngine.Events;
 //using Firebase.Extensions.TaskExtension;
 
-public class FirebaseManager : MonoBehaviour
+public class DataStore : MonoBehaviour
 {
+    [System.Serializable]
+    public enum StoreState {
+        Waiting, Ready, Loaded, Empty,
+    }
+    [SerializeField]
+    public StoreState State {
+        get;
+        protected set;
+    }
+    [Header("Settings to Target Remote")]
     public static string scenePath = "scene/";
     public string modulePath = "";
+    [Header("Store of Value")]
+    public Dictionary<string, object> value = null;
+    public string jsonValue;
+    public string type = null;
+
+    [Header("Settings to Update Remote")]
     public string positionField = "position";
     public string rotationField = "rotation";
-    public Dictionary<string, object> value = null;
-    public string type = null;
+    public float syncRate;
+    public bool partialUpdate = false;
     public string _path;
-    public bool pushIfEmptyOnInit = true;
     public bool _isListening = false;
     public UnityEvent<object> OnValueUpdate = new UnityEvent<object>();
     public virtual Dictionary<string, object> Value
@@ -25,12 +40,18 @@ public class FirebaseManager : MonoBehaviour
         {
             return value;
         }
-        set
+        protected set
         {
+            if (value != null)
+            {
+                State = StoreState.Loaded;
+            }
+
             this.value = value;
             OnValueUpdate.Invoke(value);
             if (value == null)
             {
+                State = StoreState.Empty;
                 OnEmpty();
             } else
             {
@@ -45,6 +66,17 @@ public class FirebaseManager : MonoBehaviour
                     transform.rotation = rot.GetEuler();
                 }
             }
+        }
+    }
+    public virtual void SetValue(Dictionary<string, object> data, bool partial = false)
+    {
+        Value = data;
+        if (!partial)
+        {
+            SetRemoteValue();
+        } else
+        {
+            UpdateRemoteValue();
         }
     }
     public virtual string Path
@@ -64,9 +96,11 @@ public class FirebaseManager : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        Invoke("OnFirstFrame", 0);
+        if (State == StoreState.Ready)
+        {
+            Invoke("OnFirstFrame", 0);
+        }
     }
-
     private void OnDestroy()
     {
         FirebaseDatabase.DefaultInstance.GetReference(Path).ValueChanged -= HandleUpdate;
@@ -85,13 +119,7 @@ public class FirebaseManager : MonoBehaviour
             else if (task.IsCompleted)
             {
                 DataSnapshot snapshot = task.Result;
-                if (snapshot.Value == null)
-                {
-                    if (pushIfEmptyOnInit)
-                    {
-                        SetRemoteValue();
-                    }
-                } else
+                if (snapshot.Value != null)
                 {
                     UpdateLocalValue(snapshot);
                 }
@@ -99,6 +127,20 @@ public class FirebaseManager : MonoBehaviour
         });
         Reference.ValueChanged += HandleUpdate;
         _isListening = true;
+    }
+    protected virtual IEnumerator Sync()
+    {
+        while(isActiveAndEnabled)
+        {
+            if (partialUpdate)
+            {
+                UpdateRemoteValue();
+            } else
+            {
+                SetRemoteValue();
+            }
+            yield return new WaitForSeconds(syncRate);
+        }
     }
     private void HandleUpdate(object sender, ValueChangedEventArgs args)
     {
@@ -116,9 +158,27 @@ public class FirebaseManager : MonoBehaviour
     protected virtual void OnEmpty()
     {
         Debug.LogWarning($"FirebaseManager {gameObject.name} {Path} is Empty");
+        Destroy(gameObject);
     }
-    public virtual void SetRemoteValue(Dictionary<string, object> data = null)
+    public virtual void UpdateRemoteValue()
     {
+        var data = Value;
+        if (data == null)
+        {
+            data = new Dictionary<string, object>();
+        }
+        data[positionField] = transform.GetPosition();
+        data[rotationField] = transform.GetRotation();
+        data["type"] = type;
+        if (type == null)
+        {
+            Debug.LogWarning($"{Path} has no type.");
+        }
+        Reference.UpdateChildrenAsync(data);
+    }
+    public virtual void SetRemoteValue()
+    {
+        var data = Value;
         if (data == null)
         {
             data = new Dictionary<string, object>();

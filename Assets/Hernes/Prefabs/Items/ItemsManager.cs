@@ -2,7 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class ItemsManager : FirebaseManager
+public class ItemsManager : DataStore
 {
     [SerializeField]
     GameObject spawnItem;

@@ -4,7 +4,7 @@ using UnityEngine;
 using Firebase.Database;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.HighDefinition;
-public class SettingsManager : FirebaseManager
+public class SettingsManager : DataStore
 {
     public float _fog;
     public float Fog

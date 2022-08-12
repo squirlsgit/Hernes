@@ -2,7 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class EnemyManager : FirebaseManager
+public class EnemyManager : DataStore
 {
 
     public string type;

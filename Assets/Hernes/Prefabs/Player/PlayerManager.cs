@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using HurricaneVR.Framework.Core.Player;
 using System.Linq;
-public class PlayerManager : FirebaseManager
+public class PlayerManager : DataStore
 {
     public GameObject enemyPrefab;
     // Make enemy prefab which tracks enemy movement
