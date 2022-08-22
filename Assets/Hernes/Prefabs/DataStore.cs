@@ -5,85 +5,234 @@ using Firebase;
 using Firebase.Database;
 using Firebase.Extensions;
 using UnityEngine.Events;
+using Valve.VR.InteractionSystem;
+using System.Threading.Tasks;
+using System.Linq;
+using System;
 //using Firebase.Extensions.TaskExtension;
 
-public class DataStore : MonoBehaviour
+public interface IFirebaseRecord
 {
-    [System.Serializable]
-    public enum StoreState {
-        Waiting, Ready, Loaded, Empty,
-    }
-    [SerializeField]
-    public StoreState State {
-        get;
-        protected set;
-    }
-    [Header("Settings to Target Remote")]
-    public static string scenePath = "scene/";
-    public string modulePath = "";
-    [Header("Store of Value")]
-    public Dictionary<string, object> value = null;
-    public string jsonValue;
-    public string type = null;
+    string ToJson();
+    Dictionary<string, object> Dictionary { get; }
+    DateTime LastUpdatedAt { get; set; }
+    string Type { get; }
+    Vector3 Position { get; set; }
+    Quaternion Rotation { get; set; }
+    Vector3 Scale { get; set; }
+}
 
-    [Header("Settings to Update Remote")]
-    public string positionField = "position";
-    public string rotationField = "rotation";
-    public float syncRate;
-    public bool partialUpdate = false;
-    public string _path;
-    public bool _isListening = false;
-    public UnityEvent<object> OnValueUpdate = new UnityEvent<object>();
-    public virtual Dictionary<string, object> Value
+[System.Serializable]
+public struct FirebaseRecord : IFirebaseRecord
+{
+    public List<float> rotation;
+    public List<float> position;
+    public List<float> scale;
+    public string type;
+    public string lastUpdatedAt;
+    public string ToJson()
+    {
+        return JsonUtility.ToJson(this);
+    }
+    public DateTime LastUpdatedAt
     {
         get
         {
-            return value;
+            return DateTime.Parse(lastUpdatedAt);
+        }
+        set
+        {
+            lastUpdatedAt = value.ToUniversalTime().ToString();
+        }
+    }
+    public Dictionary<string, object> Dictionary
+    {
+        get
+        {
+            return new Dictionary<string, object>()
+            {
+                { "position", position },
+                { "rotation", rotation },
+                { "scale", scale },
+                { "type", type },
+                { "lastUpdatedAt", lastUpdatedAt },
+            };
+        }
+    }
+    public string Type
+    {
+        get
+        {
+            if (type == null || type.Length == 0)
+            {
+                return null;
+            }
+            return type;
+        }
+    }
+    public Vector3 Position
+    {
+        get
+        {
+            return position.GetVector();
+        }
+        set
+        {
+            if (value != null)
+            {
+                position = new List<float>() { value.x, value.y, value.z };
+                Debug.Log($"SET POSITION {position[0]} {position[1]} value={value}");
+            }
+            else
+            {
+                position = null;
+            }
+        }
+    }
+    public Quaternion Rotation
+    {
+        get
+        {
+            return rotation.GetEuler();
+        }
+        set
+        {
+            if (value != null)
+            {
+                rotation = new List<float>() { value.eulerAngles.x, value.eulerAngles.y, value.eulerAngles.z };
+            }
+            else
+            {
+                rotation = null;
+            }
+        }
+    }
+    public Vector3 Scale
+    {
+        get
+        {
+            return scale.GetVector();
+        }
+        set
+        {
+            if (value != null)
+            {
+                scale = new List<float>() { value.x, value.y, value.z };
+            }
+            else
+            {
+                scale = null;
+            }
+        }
+    }
+}
+public class DataStore<T> : MonoBehaviour where T : IFirebaseRecord
+{
+    public enum StoreSetting
+    {
+        DestroyOnEmpty = 1 << 0,
+        DisableOnEmpty = 1 << 1,
+        EmptyOnDestroy = 1 << 2,
+        EmptyOnDisable = 1 << 3,
+        PartialUpdate = 1 << 4,
+        ReadyOnEnable = 1 << 5,
+        PushOnEnable = 1 << 6,
+    }
+    [System.Serializable]
+    public enum StoreState {
+        Waiting, Ready, Loading, Loaded, Empty,
+    }
+    public StoreState Status {
+        get
+        {
+            return _Status;
+        }
+        protected set
+        {
+            _Status = value;
+        }
+    }
+    [SerializeField]
+    protected StoreState _Status = StoreState.Ready;
+    [Header("Store of Value")]
+    [Tooltip("Synced at runtime. Used for initial push.")]
+    [SerializeField]
+    protected T _Value;
+    public virtual T Value
+    {
+        get
+        {
+            return _Value;
+        }
+        protected set
+        {
+            _Value = value;
+        }
+    }
+    public string JsonValue
+    {
+        get;
+        protected set;
+    }
+
+    [Header("Settings to Update Remote")]
+    public bool _isListening = false;
+
+
+    [Header("General Settings")]
+    [EnumFlags]
+    [SerializeField]
+    protected StoreSetting Settings = StoreSetting.PartialUpdate | StoreSetting.ReadyOnEnable;
+    public bool HasSetting(StoreSetting setting)
+    {
+        return (setting & Settings) == setting;
+    }
+    protected Dictionary<string, object> _Data = null;
+    public virtual Dictionary<string, object> Data
+    {
+        get
+        {
+            return _Data;
         }
         protected set
         {
             if (value != null)
             {
-                State = StoreState.Loaded;
+                OnLoaded();
             }
 
-            this.value = value;
-            OnValueUpdate.Invoke(value);
             if (value == null)
             {
-                State = StoreState.Empty;
                 OnEmpty();
-            } else
-            {
-                if (value.TryGetValue(positionField, out var p))
-                {
-                    var pos = (List<float>)p;
-                    transform.position = pos.GetVector();
-                }
-                if (value.TryGetValue(rotationField, out var r))
-                {
-                    var rot = (List<float>)r;
-                    transform.rotation = rot.GetEuler();
-                }
             }
+            this._Data = value;
         }
     }
-    public virtual void SetValue(Dictionary<string, object> data, bool partial = false)
-    {
-        Value = data;
-        if (!partial)
-        {
-            SetRemoteValue();
-        } else
-        {
-            UpdateRemoteValue();
-        }
-    }
+    public string _previousPath = "";
+    public string modulePathFallback = "";
+    public string PathOverride = null;
     public virtual string Path
     {
         get
         {
-            return scenePath + modulePath + gameObject.name;
+            if (PathOverride != null && PathOverride.Length > 0)
+            {
+                return PathOverride;
+            }
+            return ModulePath + "/" + gameObject.name;
+        }
+    }
+    public virtual string ModulePath
+    {
+        get
+        {
+            if (ParentStore != null)
+            {
+                return ParentStore.path;
+            } else
+            {
+                return modulePathFallback;
+            }
         }
     }
     public virtual DatabaseReference Reference
@@ -93,54 +242,79 @@ public class DataStore : MonoBehaviour
             return FirebaseDatabase.DefaultInstance.GetReference(Path);
         }
     }
-    // Start is called before the first frame update
-    void Start()
+    public virtual DatabaseReference ModuleReference
     {
-        if (State == StoreState.Ready)
+        get
         {
-            Invoke("OnFirstFrame", 0);
+            return FirebaseDatabase.DefaultInstance.GetReference(ModulePath);
         }
+    }
+    [Header("Settings to Target Remote")]
+    [SerializeField]
+    protected FirebaseStoreManager ParentStore;
+    [SerializeField]
+    protected string ParentStoreTag;
+    private DatabaseReference UsingReference;
+    private async void OnEnable()
+    {
+        if (ParentStore == null && transform.parent != null)
+        {
+            ParentStore = transform.parent.GetComponent<FirebaseStoreManager>();
+        }
+        if (ParentStore == null && ParentStoreTag != null && ParentStoreTag.Length > 0)
+        {
+            ParentStore = GameObject.FindGameObjectWithTag(ParentStoreTag)?.GetComponent<FirebaseStoreManager>();
+        }
+        if (HasSetting(StoreSetting.PushOnEnable))
+        {
+            Status = StoreState.Waiting;
+            await Push();
+        }
+        if (HasSetting(StoreSetting.ReadyOnEnable))
+        {
+            Status = StoreState.Ready;
+        }
+    }
+    private void OnDisable()
+    {
+        Reference.ValueChanged -= HandleUpdate;
+        UsingReference = null;
+        _isListening = false;
+        if (Data != null && HasSetting(StoreSetting.EmptyOnDisable))
+        {
+            Remove();
+        }
+    }
+    private void Update()
+    {
+        if (Status == StoreState.Ready || ((Status == StoreState.Loaded || Status == StoreState.Loading) && _previousPath != Path))
+        {
+            OnFirstFrame();
+        }
+        _previousPath = Path;
     }
     private void OnDestroy()
     {
         FirebaseDatabase.DefaultInstance.GetReference(Path).ValueChanged -= HandleUpdate;
         _isListening = false;
-    }
-    void OnFirstFrame()
-    {
-        _path = Path;
-        Reference.GetValueAsync().ContinueWithOnMainThread(task =>
+        if (Data != null && HasSetting(StoreSetting.EmptyOnDestroy))
         {
-            if (task.IsFaulted)
-            {
-                // Handle the error...
-                Debug.LogError(task.Exception.Message);
-            }
-            else if (task.IsCompleted)
-            {
-                DataSnapshot snapshot = task.Result;
-                if (snapshot.Value != null)
-                {
-                    UpdateLocalValue(snapshot);
-                }
-            }
-        });
-        Reference.ValueChanged += HandleUpdate;
-        _isListening = true;
-    }
-    protected virtual IEnumerator Sync()
-    {
-        while(isActiveAndEnabled)
-        {
-            if (partialUpdate)
-            {
-                UpdateRemoteValue();
-            } else
-            {
-                SetRemoteValue();
-            }
-            yield return new WaitForSeconds(syncRate);
+            Debug.Log("Empty on Destroy");
+            Remove();
         }
+    }
+    private async void OnFirstFrame()
+    {
+        StopAllCoroutines();
+        if (UsingReference != null)
+        {
+            Debug.LogWarning("Listerner already exists. Canceling listener");
+            UsingReference.ValueChanged -= HandleUpdate;
+        }
+        Debug.Log($"Object={gameObject.name} Adding Listener to Path {Path}");
+        Status = StoreState.Loading;
+        Reference.ValueChanged += HandleUpdate;
+        UsingReference = Reference;
     }
     private void HandleUpdate(object sender, ValueChangedEventArgs args)
     {
@@ -153,47 +327,107 @@ public class DataStore : MonoBehaviour
     }
     protected virtual void UpdateLocalValue(DataSnapshot snapshot)
     {
-        Value = snapshot.Value as Dictionary<string, object>;
+        //Debug.Log($"Retrieved {Path}: {snapshot.GetRawJsonValue()}");
+        Data = snapshot.Value as Dictionary<string, object>;
+        JsonValue = snapshot.GetRawJsonValue();
+        //var oldValue = Value;
+        if (JsonValue != null)
+        {
+            dynamic newValue = JsonUtility.FromJson<T>(JsonValue);
+            Value = newValue;
+            //SetFromJson(JsonValue);
+        }
+        OnValueUpdate.Invoke();
+    }
+    protected virtual void SetFromJson(string json)
+    {
+        object v = JsonUtility.FromJson<T>(json);
+        Value = (T)v;
     }
     protected virtual void OnEmpty()
     {
-        Debug.LogWarning($"FirebaseManager {gameObject.name} {Path} is Empty");
-        Destroy(gameObject);
+        Debug.LogWarning($"FirebaseManager {gameObject.name} {Path} is Empty. CurrentState = {Status.ToString()} --{Status}");
+        if (HasSetting(StoreSetting.DestroyOnEmpty) && Status == StoreState.Loaded)
+        {
+            Destroy(gameObject);
+        } else if (HasSetting(StoreSetting.DisableOnEmpty) && Status == StoreState.Loaded)
+        {
+            gameObject.SetActive(false);
+        }
+        Status = StoreState.Empty;
     }
-    public virtual void UpdateRemoteValue()
+    protected virtual void OnLoaded()
     {
-        var data = Value;
-        if (data == null)
+        if (StoreState.Loaded != Status)
         {
-            data = new Dictionary<string, object>();
+            Register();
+            Status = StoreState.Loaded;
+            gameObject.SendMessage("OnLoaded", SendMessageOptions.DontRequireReceiver);
         }
-        data[positionField] = transform.GetPosition();
-        data[rotationField] = transform.GetRotation();
-        data["type"] = type;
-        if (type == null)
-        {
-            Debug.LogWarning($"{Path} has no type.");
-        }
-        Reference.UpdateChildrenAsync(data);
     }
-    public virtual void SetRemoteValue()
+    protected virtual void Register(bool setName = false)
     {
-        var data = Value;
-        if (data == null)
+        if (setName)
         {
-            data = new Dictionary<string, object>();
+            var name = System.Guid.NewGuid().ToString();
+            Debug.Log($"Object = {gameObject.name} setting new name = {name}");
+            gameObject.name = name;
         }
-        data[positionField] = transform.GetPosition();
-        data[rotationField] = transform.GetRotation();
-        data["type"] = type;
-        if (type == null)
+        if (ParentStore != null && ParentStore.gameObject != transform.parent.gameObject)
         {
-            Debug.LogWarning($"{Path} has no type.");
+            ParentStore.register.Add(Value.Type, gameObject.name);
         }
-        Reference.SetValueAsync(data);
     }
-    public virtual void Remove()
+
+    #region DB Accessors
+    public System.Threading.Tasks.Task Push()
     {
-        Reference.RemoveValueAsync();
+        var val = Value;
+        val.Position = transform.position;
+        val.Rotation = transform.rotation;
+        val.Scale = transform.lossyScale;
+        Debug.Log($"VALUES AS JSON = {val.ToJson()}");
+        return Push(val.Dictionary);
     }
+    public System.Threading.Tasks.Task Push(Dictionary<string, object> data)
+    {
+        Register(setName: true);
+        Debug.Log($"Pushing object={gameObject.name} value={JsonUtility.ToJson(Value)}");
+        Debug.Log($"Dictionary Value object={gameObject.name} position={((dynamic)Value.Dictionary["position"]).Count}");
+        return SetValue(data, partial: true);
+    }
+    public System.Threading.Tasks.Task Push(string json)
+    {
+        Register(setName: true);
+        return SetRawValueBypass(json);
+    }
+    public virtual async System.Threading.Tasks.Task<DataSnapshot> GetValue()
+    {
+        var snapshot = await Reference.GetValueAsync();
+        UpdateLocalValue(snapshot);
+        return snapshot;
+    }
+    public virtual System.Threading.Tasks.Task SetValue(Dictionary<string, object> data, bool partial = false)
+    {
+        data["lastUpdatedAt"] = DateTime.UtcNow.ToString();
+        if (partial)
+        {
+            return Reference.UpdateChildrenAsync(data);
+        }
+        else
+        {
+            return Reference.SetValueAsync(data);
+        }
+    }
+    public virtual System.Threading.Tasks.Task SetRawValueBypass(string value)
+    {
+        return Reference.SetRawJsonValueAsync(value);
+    }
+    public virtual System.Threading.Tasks.Task Remove()
+    {
+        return Reference.RemoveValueAsync();
+    }
+#endregion
+
+    public UnityEvent OnValueUpdate = new UnityEvent();
 }

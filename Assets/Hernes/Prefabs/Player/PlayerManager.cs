@@ -1,148 +1,191 @@
+#region Assembly Firebase.TaskExtension, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null
+// E:\Hernes\Assets\Firebase\Plugins\Firebase.TaskExtension.dll
+#endregion
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using HurricaneVR.Framework.Core.Player;
 using System.Linq;
-public class PlayerManager : DataStore
+using System;
+using System.Threading.Tasks;
+using Firebase.Database;
+using Hernes;
+
+[RequireComponent(typeof(HVRPlayerController))]
+public class PlayerManager : MonoBehaviour
 {
-    public GameObject enemyPrefab;
-    // Make enemy prefab which tracks enemy movement
-    public GameObject enemyAIPrefab;
-    // Make enemy prefab which updates enemy prefab and wanders, and shoots at vfx detection with delay.
-    public Dictionary<string, object> enemies = null;
-
-    // Hit effect needs to spawn vfx that spawns vfx remotely
-    public GameObject hitEffect;
-
-    [Header("---------------Player-----------------")]
-
-    public string playerName;
-    public string type;
-    public Vector3 velocity = Vector3.zero;
-    public string state;
-    public float health;
-    public Vector3 position = Vector3.zero;
-
-    public float syncDelay = 1f;
-    public HVRPlayerController pc;
-    public override Dictionary<string, object> Value
+    [Header("Player Initialize Value")]
+    [SerializeField]
+    protected PlayerData InitPlayer;
+    [Header("Synced at Runtime")]
+    public PlayerData Player;
+    public PlayerStore Store
     {
         get
         {
-            return value;
+            return SceneManager.instance.PlayerDataStore;
+        }
+    }
+    public FirebaseStore Score
+    {
+        get
+        {
+            return SceneManager.instance.PlayerScoreStore;
+        }
+    }
+    public FirebaseStore Events
+    {
+        get
+        {
+            return SceneManager.instance.PlayerEventsStore;
+        }
+    }
+    public Dictionary<string, object> Data
+    {
+        get
+        {
+            return SceneManager.instance.PlayerDataStore?.Data;
+        }
+    }
+    protected string _localJsonData = null;
+    public string JsonData
+    {
+        get
+        {
+            return SceneManager.instance.PlayerDataStore?.JsonValue;
+        }
+    }
+    public string Name
+    {
+        get
+        {
+            return Store.gameObject.name;
         }
         set
         {
-            this.value = value;
-            OnValueUpdate.Invoke(value);
-            if (value == null)
-            {
-                OnEmpty();
-            }
-            if (value.ContainsKey("type"))
-            {
-                type = value["type"] as string;
-            }
-            if (value.ContainsKey("state"))
-            {
-                state = value["state"] as string;
-            }
-            if (value.ContainsKey("health"))
-            {
-                health = (float)value["health"];
-            }
-            if (value.TryGetValue("pos", out var p))
-            {
-                var pos = p as List<float>;
-                transform.position = new Vector3(pos[0], pos[1], pos[2]);
-            }
-            if (value.TryGetValue("velocity", out var v))
-            {
-                var pos = v as List<float>;
-                transform.position = new Vector3(pos[0], pos[1], pos[2]);
-            }
+            Store.gameObject.name = value;
+            Score.gameObject.name = value;
         }
     }
-    public override string Path
+    public List<string> PlayerNames = new List<string>();
+    protected HVRPlayerController pc;
+    private void Start()
     {
-        get
-        {
-            return scenePath + modulePath + playerName;
-        }
+        pc = GetComponent<HVRPlayerController>();
     }
-    // Start is called before the first frame update
-    void Start()
-    {
-        
-    }
-
     // Update is called once per frame
     void Update()
     {
-        if (health <= 0f)
+        if (SceneManager.instance.State == SceneManager.GameState.Playing && (Store.Status == PlayerStore.StoreState.Loaded /*|| Store.State == DataStore.StoreState.Empty*/) && Player.health <= 0f)
         {
             DespawnPlayer();
         }
+        // Sync position and rotation
+        Store.transform.position = transform.position;
+        Store.transform.rotation = transform.rotation;
     }
-    public void SpawnPlayer()
+    public double attritionDuration =  1200;
+    public double sleepingAttritionDuration = (24 * 3600) * 7;
+    private void FixedUpdate()
     {
-        if (name == null)
+        //if (SceneManager.instance.State == SceneManager.GameState.Playing)
+        //{
+        //    double attrition = Time.fixedDeltaTime * (1 / attritionDuration);
+        //    var health = (1000 * Player.health - 1000 * attrition) / 1000;
+        //    Player.health = (float)health;
+        //    Player.Velocity = new Vector3(pc.xzVelocity.x, pc.yVelocity, pc.xzVelocity.z);
+        //    Store.SetValue(Player.Dictionary, partial: true);
+        //}
+    }
+    public async System.Threading.Tasks.Task InitPlayerData(bool setRemote = false)
+    {
+        DataSnapshot snapshot = await Store.GetValue();
+        Debug.Log($"Player Manager retrieved player data ={snapshot.GetRawJsonValue()}");
+        if (snapshot.Value != null)
         {
-            // select random name
+            Player = PlayerData.FromJson(snapshot.GetRawJsonValue());
+            if (Player.state == "sleeping")
+            {
+                var attrition = (DateTime.UtcNow.Subtract(Store.Value.LastUpdatedAt.ToUniversalTime()).TotalSeconds / sleepingAttritionDuration);
+                Debug.Log($"Applying attrition to player health {attrition}");
+                Player.health = (1000 * Player.health - (float)(attrition * 1000)) / 1000;
+                Player.state = InitPlayer.state;
+            }
         }
-        // Spawn enemies
-        
-        // Track enemy added and spawn enemies
+        else
+        {
+            //Initialize new Player Object
+            Player = InitPlayer;
+        }
+        Player.controller = "player";
+        Player.StartAt = DateTime.Now;
+        // Select Player Name
+        if (Name == null || Name.Length == 0)
+        {
+            Name = PlayerNames.Random();
+        }
+        if (setRemote)
+        {
+            Player.Position = transform.position;
+            Player.Rotation = transform.rotation;
+            Player.Scale = transform.lossyScale;
+            // Set Remote Player Value
+            Store.SetRawValueBypass(Player.ToJson());
+        }
+    }
+    public async System.Threading.Tasks.Task SpawnPlayer()
+    {
+        await InitPlayerData();
+        // Select Position and Rotation for Spawn
+        var spawn = GameObject.FindGameObjectsWithTag("PlayerSpawn").Where((s) => s.activeInHierarchy).ToList().Random();
+        transform.position = spawn.transform.position;
+        transform.rotation = spawn.transform.rotation;
 
+        // Sync position and rotation
+        Store.transform.position = transform.position;
+        Store.transform.rotation = transform.rotation;
 
+        spawn.SetActive(false);
 
-        playerName = name;
-        List<GameObject> spawns = GameObject.FindGameObjectsWithTag("SpawnPlayer").ToList();
-        int i = Mathf.RoundToInt(Random.value * (spawns.Count - 1));
-        transform.position = spawns[i].transform.position;
-        transform.rotation = spawns[i].transform.rotation;
-        Destroy(spawns[i]);
-        spawns.RemoveAt(i);
-        StopAllCoroutines();
-        StartCoroutine(SyncDatabase());
+        // Set Remote Player Value
+        Store.SetRawValueBypass(Player.ToJson());
+        Store.OnValueUpdate.AddListener(OnRemoteUpdated);
+        // Activate Data Store
+        Store.gameObject.SetActive(true);
     }
     public void DespawnPlayer()
     {
+        Store.gameObject.SetActive(false);
         var origin = GameObject.FindGameObjectWithTag("PlayerOrigin");
         transform.position = origin.transform.position;
         transform.rotation = origin.transform.rotation;
-
-
-        // Remove enemies
-        var enemies = GameObject.FindGameObjectsWithTag("Enemy");
-        foreach(var enemy in enemies)
+        Score.SetValue(new Dictionary<string, object>()
         {
-            Destroy(enemy);
+            { "time", (DateTime.UtcNow.Subtract(Player.StartAt.ToUniversalTime())).ToString() },
+            { "lastUpdatedAt", DateTime.Now.ToString() },
+        });
+        Store.Remove();
+        Store.gameObject.SetActive(false);
+    }
+    public void OnNameChange(string name)
+    {
+        Name = name;
+        Debug.Log($"Name changed to {name}");
+    }
+    public void OnRemoteUpdated()
+    {
+        Debug.Log($"Player Manager - On Remote Updated {Store.Path}");
+        if (Store.JsonValue != null)
+        {
+            Player = PlayerData.FromJson(Store.JsonValue);
         }
     }
-    public void OnHit(Vector3 pos, Vector3 dir, GameObject gO)
+    public void OnHeadsetRemoved()
     {
-        health -= 0.4f;
-        Instantiate(hitEffect, pos, Quaternion.LookRotation(Vector3.up, dir));
-    }
-    protected virtual IEnumerator SyncDatabase()
-    {
-        while (isActiveAndEnabled)
+        Store.SetValue(new Dictionary<string, object>()
         {
-            yield return new WaitForSeconds(syncDelay);
-            SyncDBValue();
-        }
-    }
-    public void SyncDBValue()
-    {
-        var dict = new Dictionary<string, object>
-        {
-            { "type", type },
-            { "pos", new List<float>() { transform.position.x, transform.position.y, transform.position.z } },
-            { "velocity", new List<float>() { pc.xzVelocity.x, pc.yVelocity, pc.xzVelocity.z } },
-            { "state", state },
-            { "health", health },
-        };
-        SetRemoteValue(dict);
+            { "state", "sleeping" },
+        }, partial: true);
     }
 }
+ 

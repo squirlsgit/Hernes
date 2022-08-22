@@ -2,16 +2,41 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.Linq;
+#if UNITY_EDITOR
+using UnityEditor;
+[CustomEditor(typeof(ItemSpawner))]
+public class TestItemSpawner : Editor
+{
+    public string interfaceName = "squirrel";
+    public override void OnInspectorGUI()
+    {
+        var itemSpawner = (ItemSpawner)target;
+        GUILayout.Space(20f);
+        GUILayout.Label("Test Item Spawning");
+        if (EditorApplication.isPlaying)
+        {
+            foreach(var item in itemSpawner.Prefabs)
+            {
+                if (GUILayout.Button($"Spawn {item.type}"))
+                {
+                    itemSpawner.SpawnItem(item);
+                }
+            }
+        }
+        base.OnInspectorGUI();
+    }
+}
+#endif
 public class ItemSpawner : MonoBehaviour
 {
     public static ItemSpawner instance;
-    public string spawningTag = "ItemSpawner";
+    public string spawningTag = "ItemSpawn";
     public AnimationCurve spawnRate = AnimationCurve.Linear(0, 1, 1, 1);
     public List<GameObject> spawners;
     public float spawnTime;
     public int maxItems = 100;
-    public PrefabStore store;
-    public List<SpawnItemScriptableObject> prefabs
+    public FirebaseStoreManager store;
+    public List<SpawnItemScriptableObject> Prefabs
     {
         get
         {
@@ -27,29 +52,28 @@ public class ItemSpawner : MonoBehaviour
     void Start()
     {
         spawners = GameObject.FindGameObjectsWithTag(spawningTag).ToList();
-
     }
 
     // Update is called once per frame
     void Update()
     {
-        var rate = spawnRate.Evaluate(transform.childCount / maxItems);
-        if (rate > 0f && Time.time - spawnTime > 1f / rate)
-        {
-            SpawnItem();
-            spawnTime = Time.time;
-        }
+        //var rate = spawnRate.Evaluate(transform.childCount / maxItems);
+        //if (rate > 0f && Time.time - spawnTime > 1f / rate)
+        //{
+        //    SpawnItem();
+        //    spawnTime = Time.time;
+        //}
     }
-    void SpawnItem(int i = -1, string name = null)
+    public void SpawnItem(SpawnItemScriptableObject so = null)
     {
         if (transform.childCount < maxItems)
         {
-            if (i == -1)
+            if (so == null)
             {
-                i = Mathf.RoundToInt(Random.value * (prefabs.Count - 1));
+                so = store.prefabs.Random();
             }
-            int j = Mathf.RoundToInt(Random.value * (spawners.Count - 1));
-            store.Spawn(i, spawners[j].transform.position, name: name, rotation: spawners[j].transform.rotation);
+            var spawner = spawners.Random();
+            store.Spawn(so, spawner.transform.position, rotation: spawner.transform.rotation);
         }
     }
 }

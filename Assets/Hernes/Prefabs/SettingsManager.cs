@@ -4,7 +4,7 @@ using UnityEngine;
 using Firebase.Database;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.HighDefinition;
-public class SettingsManager : DataStore
+public class SettingsManager : FirebaseStore
 {
     public float _fog;
     public float Fog
@@ -49,8 +49,8 @@ public class SettingsManager : DataStore
     protected override void UpdateLocalValue(DataSnapshot snapshot)
     {
         base.UpdateLocalValue(snapshot);
-        Fog = (float)value["fog"];
-        Time = (string)value["time"];
+        Fog = (float)(double)_Data["fog"];
+        Time = (string)_Data["time"];
     }
 
     // Update is called once per frame
